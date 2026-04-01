@@ -1,4 +1,5 @@
 import java.util.*;
+import java.util.concurrent.*;
 
 
 class Reservation {
@@ -26,7 +27,6 @@ class Reservation {
 
 class RoomInventory {
     private Map<String, Integer> inventory = new HashMap<>();
-    private Stack<String> rollbackStack = new Stack<>();
 
     public RoomInventory() {
         inventory.put("Single Room", 5);
@@ -34,62 +34,69 @@ class RoomInventory {
         inventory.put("Suite Room", 2);
     }
 
-    public void bookRoom(Reservation res) throws Exception {
+    public synchronized boolean bookRoom(Reservation res) {
         String roomType = res.getRoomType();
-        if (!inventory.containsKey(roomType)) {
-            throw new Exception("Invalid room type: " + roomType);
-        }
-        int available = inventory.get(roomType);
+        int available = inventory.getOrDefault(roomType, 0);
         if (available <= 0) {
-            throw new Exception("No available rooms for: " + roomType);
+            System.out.println("No available rooms for: " + roomType + " | Reservation failed: " + res.getReservationId());
+            return false;
         }
         inventory.put(roomType, available - 1);
-        rollbackStack.push(res.getReservationId());
-        System.out.println("Booked: " + res);
+        System.out.println("Booked: " + res + " | Remaining " + roomType + ": " + (available - 1));
+        return true;
     }
 
-    public void cancelBooking(Reservation res) throws Exception {
-        if (!rollbackStack.contains(res.getReservationId())) {
-            throw new Exception("Cannot cancel: Reservation not found or already cancelled: " + res.getReservationId());
-        }
-        rollbackStack.remove(res.getReservationId());
-
-        String roomType = res.getRoomType();
-        inventory.put(roomType, inventory.get(roomType) + 1);
-        System.out.println("Cancelled: " + res + " | Inventory restored.");
-    }
-
-    public void printInventory() {
-        System.out.println("\n=== Current Room Inventory ===");
+    public synchronized void printInventory() {
+        System.out.println("\n=== Final Inventory Status ===");
         inventory.forEach((type, count) -> System.out.println(type + ": " + count + " room(s) available"));
     }
 }
+
+class BookingTask implements Runnable {
+    private RoomInventory inventory;
+    private Reservation reservation;
+
+    public BookingTask(RoomInventory inventory, Reservation reservation) {
+        this.inventory = inventory;
+        this.reservation = reservation;
+    }
+
+    @Override
+    public void run() {
+        inventory.bookRoom(reservation);
+    }
+}
+
 public class BookMyStaysApp {
 
     public static void main(String[] args) {
-        System.out.println("=== Book My Stay App (Version 10.0) ===");
-
+        System.out.println("=== Book My Stay App (Version 11.0) ===");
         RoomInventory inventory = new RoomInventory();
 
-        Reservation r1 = new Reservation("RES101", "Single Room");
-        Reservation r2 = new Reservation("RES102", "Double Room");
-        Reservation r3 = new Reservation("RES103", "Suite Room");
+        List<Reservation> requests = Arrays.asList(
+                new Reservation("RES201", "Single Room"),
+                new Reservation("RES202", "Double Room"),
+                new Reservation("RES203", "Single Room"),
+                new Reservation("RES204", "Suite Room"),
+                new Reservation("RES205", "Single Room"),
+                new Reservation("RES206", "Double Room"),
+                new Reservation("RES207", "Suite Room"),
+                new Reservation("RES208", "Single Room")
+        );
 
+        ExecutorService executor = Executors.newFixedThreadPool(4);
+        for (Reservation res : requests) {
+            executor.submit(new BookingTask(inventory, res));
+        }
+
+        executor.shutdown();
         try {
-
-            inventory.bookRoom(r1);
-            inventory.bookRoom(r2);
-            inventory.bookRoom(r3);
-
-            inventory.cancelBooking(r2);
-
-            Reservation r4 = new Reservation("RES999", "Suite Room");
-            inventory.cancelBooking(r4); // Should raise error
-        } catch (Exception e) {
-            System.out.println(e.getMessage());
+            executor.awaitTermination(10, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
         }
 
         inventory.printInventory();
-        System.out.println("\nBooking Cancellation & Inventory Rollback completed.");
+        System.out.println("\nConcurrent Booking Simulation completed.");
     }
 }
